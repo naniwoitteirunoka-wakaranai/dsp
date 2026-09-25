@@ -1,0 +1,7 @@
+cryptography
+scikit-learn
+pandas
+numpy
+flask
+PyJWT
+requests
