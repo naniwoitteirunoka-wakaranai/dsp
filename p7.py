@@ -23,11 +23,11 @@ model.fit(X_train, y_train)
 # User Input
 url = input("Enter URL ")
 
-features = [[
-    len(url),
-    int("@" in url),
-    int(url.startswith("https"))
-]]
+features = pd.DataFrame([{
+    "length": len(url),
+    "has_at": int("@" in url),
+    "https": int(url.startswith("https"))
+}])
 
 result = model.predict(features)[0]
 
