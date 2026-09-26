@@ -22,8 +22,10 @@ for col in df.columns:
         print(col)
 
 # ---------- Classification ----------
-print("\nData Type Structured")
-print("Data State At Rest")
+print("\nData Type = Structured")
+print("Data State = At Rest")
+print("Data State = In Transit")
+print("Data State = In Use")
 
 # ---------- Simple Anonymization ----------
 df["Name"] = "*****"
