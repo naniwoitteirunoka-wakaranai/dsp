@@ -17,4 +17,10 @@ print("\nObfuscated Code")
 print(encoded)
 
 print("\nExecuting Hidden Code")
-exec(base64.b64decode(encoded).decode())
+decoded = base64.b64decode(encoded).decode()
+
+print("\nDe Obfuscated Code")
+print(decoded)
+
+print("\nExecuting Hidden Code")
+exec(decoded)
