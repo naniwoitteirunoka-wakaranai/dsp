@@ -21,7 +21,12 @@ text = tk.Text(root, bg="#2b2b2b", fg="white")
 text.pack(fill="both", expand=True, padx=10, pady=10)
 
 def scan():
-    file = filedialog.askopenfilename()
+    file = filedialog.askopenfilename(
+    filetypes=[
+        ("Source Files", "*.py *.js *.java *.cpp *.c"),
+        ("All Files", "*.*")
+    ]
+)
     if not file:
         return
 
