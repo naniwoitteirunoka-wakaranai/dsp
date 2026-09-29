@@ -5,3 +5,7 @@ numpy
 flask
 PyJWT
 requests
+groq
+pypdf
+python-docx
+reportlab
