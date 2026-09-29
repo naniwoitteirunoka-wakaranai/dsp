@@ -1,288 +1,83 @@
-import os
-import shutil
-import joblib
-import pandas as pd
-
+import os, shutil, joblib, numpy as np, pandas as pd
 from google.colab import drive, files
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline, FeatureUnion
+from sklearn.preprocessing import FunctionTransformer, MaxAbsScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import classification_report
 
-
-# =========================================================
 # 1. Google Drive
-# =========================================================
-
 drive.mount("/content/drive")
-
 DRIVE_DIR = "/content/drive/MyDrive/PhishingDetection"
+DATASET_PATH = os.path.join(DRIVE_DIR, "malicious_phish.csv")
+MODEL_PATH = os.path.join(DRIVE_DIR, "phishing_model.pkl")
+os.makedirs(DRIVE_DIR, exist_ok=True)
 
-DATASET_PATH = os.path.join(
-    DRIVE_DIR,
-    "malicious_phish.csv"
-)
-
-MODEL_PATH = os.path.join(
-    DRIVE_DIR,
-    "phishing_tfidf_model.pkl"
-)
-
-VECTORIZER_PATH = os.path.join(
-    DRIVE_DIR,
-    "phishing_tfidf_vectorizer.pkl"
-)
-
-os.makedirs(
-    DRIVE_DIR,
-    exist_ok=True
-)
-
-
-# =========================================================
 # 2. Dataset
-# =========================================================
-
 if os.path.exists(DATASET_PATH):
-
     print("Dataset found in Google Drive")
-    print("Using saved dataset")
-
 else:
-
-    print("Dataset not found in Google Drive")
-    print("Please select the CSV file")
-
+    print("Dataset not found. Please select the CSV file")
     uploaded = files.upload()
-
-    uploaded_file = next(iter(uploaded))
-
-    shutil.copy(
-        uploaded_file,
-        DATASET_PATH
-    )
-
+    shutil.copy(next(iter(uploaded)), DATASET_PATH)
     print("Dataset saved to Google Drive")
 
+# 3. Load + clean (0 = legit, 1 = phishing)
+clean = lambda s: (s.fillna("").astype(str).str.strip().str.lower()
+                   .str.replace(r"^https?://", "", regex=True)
+                   .str.replace(r"^www\.", "", regex=True))
 
-# =========================================================
-# 3. Load Dataset
-# =========================================================
+df = pd.read_csv(DATASET_PATH)
+df = df[df["type"].isin(["benign", "phishing"])].copy()
+df["label"] = df["type"].map({"benign": 0, "phishing": 1})
+df["url"] = clean(df["url"])
+print(df["label"].value_counts())
 
-df = pd.read_csv(
-    DATASET_PATH
-)
-
-print("\nOriginal Dataset")
-print("Total URLs ", len(df))
-
-print("\nCategories")
-print(df["type"].value_counts())
-
-
-# =========================================================
-# 4. Keep Legitimate + Phishing
-# =========================================================
-
-df = df[
-    df["type"].isin(
-        ["benign", "phishing"]
-    )
-].copy()
-
-
-# 0 = Legitimate
-# 1 = Phishing
-
-df["label"] = df["type"].map({
-    "benign": 0,
-    "phishing": 1
-})
-
-df["url"] = (
-    df["url"]
-    .fillna("")
-    .astype(str)
-    .str.strip()
-)
-
-
-print("\nPhishing Detection Dataset")
-print("Total Records ", len(df))
-print("Legitimate ", sum(df["label"] == 0))
-print("Phishing ", sum(df["label"] == 1))
-
-
-# =========================================================
-# 5. Train / Test Split
-# =========================================================
-
+# 4. Split
 X_train, X_test, y_train, y_test = train_test_split(
-    df["url"],
-    df["label"],
-    test_size=0.2,
-    random_state=42,
-    stratify=df["label"]
-)
+    df["url"], df["label"], test_size=0.2, random_state=42, stratify=df["label"])
 
+# 5. Handcrafted features (length, @, dots, hyphens, digits, IP, ...)
+def feats(urls):
+    s = pd.Series(list(urls))
+    return np.c_[
+        s.str.len(), s.str.count("@"), s.str.count(r"\."), s.str.count("-"),
+        s.str.count(r"\d"), s.str.count("/"), s.str.count(r"\?"), s.str.count("="),
+        s.str.contains(r"^\d+\.\d+\.\d+\.\d+"),
+    ].astype(float)
 
-# =========================================================
-# 6. TF-IDF Feature Extraction
-# =========================================================
+# 6. Model: char n-gram TF-IDF + handcrafted features -> Logistic Regression
+model = Pipeline([
+    ("features", FeatureUnion([
+        ("ngrams", TfidfVectorizer(analyzer="char", ngram_range=(3, 5),
+                                   min_df=2, max_features=300000, sublinear_tf=True)),
+        ("hand", Pipeline([("f", FunctionTransformer(feats)), ("s", MaxAbsScaler())])),
+    ])),
+    ("clf", LogisticRegression(C=10, max_iter=1000, class_weight="balanced")),
+])
 
-print("\nCreating character-level TF-IDF features...")
+print("\nTraining...")
+model.fit(X_train, y_train)
 
-vectorizer = TfidfVectorizer(
-    analyzer="char",
-    ngram_range=(3, 5),
-    min_df=2,
-    max_features=200000,
-    sublinear_tf=True
-)
+# 7. Evaluate
+print(classification_report(y_test, model.predict(X_test),
+                            target_names=["Legitimate", "Phishing"]))
 
-X_train_tfidf = vectorizer.fit_transform(
-    X_train
-)
+# 8. Save
+joblib.dump(model, MODEL_PATH)
+print("Model saved:", MODEL_PATH)
 
-X_test_tfidf = vectorizer.transform(
-    X_test
-)
+# 9. Test new URL
+TRUSTED = {"google.com", "youtube.com", "facebook.com", "amazon.com", "wikipedia.org",
+           "microsoft.com", "apple.com", "github.com", "linkedin.com", "twitter.com"}
 
-print(
-    "Training Features ",
-    X_train_tfidf.shape
-)
+url = clean(pd.Series([input("\nEnter URL ")]))[0]
+host = url.split("/")[0].split(":")[0]
 
-
-# =========================================================
-# 7. Train Logistic Regression
-# =========================================================
-
-print("\nTraining phishing detection model...")
-
-model = LogisticRegression(
-    max_iter=1000,
-    C=2,
-    class_weight="balanced",
-    n_jobs=-1
-)
-
-model.fit(
-    X_train_tfidf,
-    y_train
-)
-
-
-# =========================================================
-# 8. Test Model
-# =========================================================
-
-predictions = model.predict(
-    X_test_tfidf
-)
-
-accuracy = accuracy_score(
-    y_test,
-    predictions
-)
-
-print(
-    "\nModel Accuracy ",
-    round(
-        accuracy * 100,
-        2
-    ),
-    "%"
-)
-
-print("\nClassification Report")
-print(
-    classification_report(
-        y_test,
-        predictions,
-        target_names=[
-            "Legitimate",
-            "Phishing"
-        ]
-    )
-)
-
-
-# =========================================================
-# 9. Save Model
-# =========================================================
-
-joblib.dump(
-    model,
-    MODEL_PATH
-)
-
-joblib.dump(
-    vectorizer,
-    VECTORIZER_PATH
-)
-
-print("\nModel saved to Google Drive")
-print(MODEL_PATH)
-
-print("\nTF-IDF vectorizer saved to Google Drive")
-print(VECTORIZER_PATH)
-
-
-# =========================================================
-# 10. Test New URL
-# =========================================================
-
-url = input(
-    "\nEnter URL "
-)
-
-url_features = vectorizer.transform(
-    [url]
-)
-
-result = model.predict(
-    url_features
-)[0]
-
-probability = model.predict_proba(
-    url_features
-)[0]
-
-
-# =========================================================
-# 11. Display Prediction
-# =========================================================
-
-print("\nPrediction")
-
-if result == 1:
-
-    print(
-        "Phishing Website"
-    )
-
+if host in TRUSTED:
+    print("\nPrediction: Legitimate Website (trusted domain)")
 else:
-
-    print(
-        "Legitimate Website"
-    )
-
-
-print(
-    "\nLegitimate Probability ",
-    round(
-        probability[0] * 100,
-        2
-    ),
-    "%"
-)
-
-print(
-    "Phishing Probability ",
-    round(
-        probability[1] * 100,
-        2
-    ),
-    "%"
-)
+    p = model.predict_proba([url])[0]
+    print("\nPrediction:", "Phishing Website" if p[1] > 0.5 else "Legitimate Website")
+    print(f"Legitimate: {p[0]*100:.2f}%  |  Phishing: {p[1]*100:.2f}%")
