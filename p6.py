@@ -3,7 +3,7 @@ from tkinter import filedialog
 
 root = tk.Tk()
 root.title("Vulnerability Analyzer")
-root.geometry("650x450")
+root.geometry("700x500")
 root.configure(bg="#1e1e1e")
 
 BG, FG, BTN = "#1e1e1e", "white", "#2563eb"
@@ -17,33 +17,96 @@ patterns = {
     "Pickle Risk": "pickle.loads"
 }
 
-text = tk.Text(root, bg="#2b2b2b", fg="white")
+text = tk.Text(
+    root,
+    bg="#2b2b2b",
+    fg="white",
+    insertbackground="white",
+    font=("Consolas", 10)
+)
 text.pack(fill="both", expand=True, padx=10, pady=10)
+
 
 def scan():
     file = filedialog.askopenfilename(
-    filetypes=[
-        ("Source Files", "*.py *.js *.java *.cpp *.c"),
-        ("All Files", "*.*")
-    ]
-)
+        filetypes=[
+            ("Python", "*.py"),
+            ("JavaScript", "*.js"),
+            ("Java", "*.java"),
+            ("C/C++", "*.c *.cpp"),
+            ("All Files", "*.*")
+        ]
+    )
+
     if not file:
         return
 
-    code = open(file, encoding="utf-8", errors="ignore").read()
+    lines = open(
+        file,
+        encoding="utf-8",
+        errors="ignore"
+    ).readlines()
+
     text.delete("1.0", tk.END)
+
+    text.insert(
+        tk.END,
+        "VULNERABILITY ANALYSIS REPORT\n"
+        + "=" * 60
+        + "\n\n"
+    )
+
     found = False
 
-    for name, word in patterns.items():
-        if word.lower() in code.lower():
-            text.insert(tk.END, f"⚠ {name}\n")
-            found = True
+    for no, line in enumerate(lines, 1):
+
+        for name, word in patterns.items():
+
+            if word.lower() in line.lower():
+
+                text.insert(
+                    tk.END,
+                    f"Vulnerability  {name}\n"
+                    f"Line Number    {no}\n"
+                    f"Source Code    {line.strip()}\n"
+                    + "-" * 60
+                    + "\n"
+                )
+
+                found = True
 
     if not found:
-        text.insert(tk.END, "✅ No Common Vulnerabilities Found")
+        text.insert(
+            tk.END,
+            "No Common Vulnerabilities Found"
+        )
 
-tk.Button(root, text="Select File and Scan",
-          command=scan, bg=BTN, fg="white",
-          width=22).pack(pady=8)
+
+title = tk.Label(
+    root,
+    text="Source Code Vulnerability Analyzer",
+    bg=BG,
+    fg=FG,
+    font=("Arial", 15, "bold")
+)
+title.pack(pady=10)
+
+subtitle = tk.Label(
+    root,
+    text="Educational Demonstration using predefined vulnerability patterns",
+    bg=BG,
+    fg="#00ff99",
+    font=("Arial", 10)
+)
+subtitle.pack()
+
+tk.Button(
+    root,
+    text="Select File and Scan",
+    command=scan,
+    bg=BTN,
+    fg="white",
+    width=25
+).pack(pady=10)
 
 root.mainloop()
