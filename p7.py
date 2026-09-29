@@ -2,7 +2,9 @@ import os
 import shutil
 import joblib
 import pandas as pd
+import ipaddress
 
+from urllib.parse import urlparse
 from google.colab import drive, files
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
@@ -10,7 +12,7 @@ from sklearn.metrics import accuracy_score
 
 
 # =========================================================
-# 1. Mount Google Drive
+# 1. Google Drive
 # =========================================================
 
 drive.mount("/content/drive")
@@ -31,7 +33,14 @@ os.makedirs(DRIVE_DIR, exist_ok=True)
 
 
 # =========================================================
-# 2. Check Dataset
+# 2. Model Version
+# =========================================================
+
+MODEL_VERSION = 2
+
+
+# =========================================================
+# 3. Check Dataset
 # =========================================================
 
 if os.path.exists(DATASET_PATH):
@@ -42,7 +51,7 @@ if os.path.exists(DATASET_PATH):
 else:
 
     print("Dataset not found in Google Drive")
-    print("Please select the CSV you uploaded")
+    print("Please select the CSV file")
 
     uploaded = files.upload()
 
@@ -57,34 +66,178 @@ else:
 
 
 # =========================================================
-# 3. Check if Model Already Exists
+# 4. URL Feature Extraction
 # =========================================================
+
+def extract_features(url):
+
+    url = str(url).strip()
+
+    hostname = ""
+    path = ""
+
+    try:
+
+        if not url.startswith(
+            ("http://", "https://")
+        ):
+            url = "http://" + url
+
+        parsed = urlparse(url)
+
+        try:
+            hostname = parsed.hostname or ""
+        except ValueError:
+            hostname = ""
+
+        path = parsed.path or ""
+
+    except ValueError:
+
+        # Handles malformed URLs
+        pass
+
+
+    # -----------------------------------------------------
+    # Check for IP address
+    # -----------------------------------------------------
+
+    try:
+
+        ipaddress.ip_address(hostname)
+        has_ip = 1
+
+    except (ValueError, TypeError):
+
+        has_ip = 0
+
+
+    # -----------------------------------------------------
+    # Suspicious words
+    # -----------------------------------------------------
+
+    suspicious_words = [
+        "login",
+        "verify",
+        "verification",
+        "secure",
+        "account",
+        "update",
+        "confirm",
+        "bank",
+        "signin",
+        "password",
+        "credential",
+        "wallet",
+        "payment"
+    ]
+
+    suspicious_count = sum(
+        word in url.lower()
+        for word in suspicious_words
+    )
+
+
+    # -----------------------------------------------------
+    # Return features
+    # -----------------------------------------------------
+
+    return {
+
+        "url_length": len(url),
+
+        "hostname_length": len(hostname),
+
+        "path_length": len(path),
+
+        "dot_count": url.count("."),
+
+        "hyphen_count": url.count("-"),
+
+        "digit_count": sum(
+            c.isdigit()
+            for c in url
+        ),
+
+        "at_count": url.count("@"),
+
+        "question_count": url.count("?"),
+
+        "equal_count": url.count("="),
+
+        "slash_count": url.count("/"),
+
+        "has_https": int(
+            url.lower().startswith("https://")
+        ),
+
+        "has_ip": has_ip,
+
+        "subdomain_count": max(
+            0,
+            len(hostname.split(".")) - 2
+        ),
+
+        "suspicious_words": suspicious_count
+    }
+
+
+# =========================================================
+# 5. Load Saved Model
+# =========================================================
+
+model = None
 
 if os.path.exists(MODEL_PATH):
 
     print("\nSaved Random Forest model found")
-    print("Loading model...")
 
-    model = joblib.load(MODEL_PATH)
+    saved = joblib.load(
+        MODEL_PATH
+    )
 
-    print("Model loaded successfully")
+    if (
+        isinstance(saved, dict)
+        and saved.get("version") == MODEL_VERSION
+    ):
+
+        model = saved["model"]
+
+        print("Model version is current")
+        print("Loading saved model...")
+        print("Model loaded successfully")
+
+    else:
+
+        print("Old model detected")
+        print("Retraining with improved features...")
 
 
 # =========================================================
-# 4. Train Model if It Does Not Exist
+# 6. Train Model
 # =========================================================
 
-else:
+if model is None:
 
-    print("\nNo saved model found")
-    print("Loading dataset...")
+    print("\nLoading dataset...")
 
-    df = pd.read_csv(DATASET_PATH)
+    df = pd.read_csv(
+        DATASET_PATH
+    )
+
 
     print("\nDataset Information")
-    print("Total URLs ", len(df))
+
+    print(
+        "Total URLs ",
+        len(df)
+    )
+
     print("\nCategories")
-    print(df["type"].value_counts())
+
+    print(
+        df["type"].value_counts()
+    )
 
 
     # -----------------------------------------------------
@@ -102,58 +255,47 @@ else:
     # 1 = Phishing
 
     df["label"] = df["type"].map({
+
         "benign": 0,
+
         "phishing": 1
+
     })
 
 
     # -----------------------------------------------------
-    # Extract URL Features
+    # Extract Features
     # -----------------------------------------------------
 
-    print("\nExtracting URL Features...")
+    print("\nExtracting URL features...")
 
-    df["url_length"] = df["url"].apply(len)
-
-    df["has_at"] = df["url"].apply(
-        lambda x: int("@" in x)
+    feature_data = df["url"].apply(
+        extract_features
     )
 
-    df["has_https"] = df["url"].apply(
-        lambda x: int(
-            x.lower().startswith("https://")
-        )
+    X = pd.DataFrame(
+        feature_data.tolist()
     )
 
-    df["dot_count"] = df["url"].apply(
-        lambda x: x.count(".")
-    )
-
-    df["slash_count"] = df["url"].apply(
-        lambda x: x.count("/")
-    )
-
-
-    # -----------------------------------------------------
-    # Select Features
-    # -----------------------------------------------------
-
-    feature_columns = [
-        "url_length",
-        "has_at",
-        "has_https",
-        "dot_count",
-        "slash_count"
-    ]
-
-    X = df[feature_columns]
     y = df["label"]
 
 
     print("\nPhishing Detection Dataset")
-    print("Total Records ", len(df))
-    print("Legitimate ", sum(y == 0))
-    print("Phishing ", sum(y == 1))
+
+    print(
+        "Total Records ",
+        len(df)
+    )
+
+    print(
+        "Legitimate ",
+        sum(y == 0)
+    )
+
+    print(
+        "Phishing ",
+        sum(y == 1)
+    )
 
 
     # -----------------------------------------------------
@@ -161,11 +303,17 @@ else:
     # -----------------------------------------------------
 
     X_train, X_test, y_train, y_test = train_test_split(
+
         X,
+
         y,
+
         test_size=0.2,
+
         random_state=42,
+
         stratify=y
+
     )
 
 
@@ -176,14 +324,26 @@ else:
     print("\nTraining Random Forest...")
 
     model = RandomForestClassifier(
-        n_estimators=100,
+
+        n_estimators=150,
+
+        max_depth=15,
+
         random_state=42,
-        n_jobs=-1
+
+        n_jobs=-1,
+
+        class_weight="balanced"
+
     )
 
+
     model.fit(
+
         X_train,
+
         y_train
+
     )
 
 
@@ -191,70 +351,153 @@ else:
     # Accuracy
     # -----------------------------------------------------
 
-    predictions = model.predict(X_test)
+    predictions = model.predict(
+        X_test
+    )
 
     accuracy = accuracy_score(
+
         y_test,
+
         predictions
+
+    )
+
+
+    print(
+
+        "\nModel Accuracy ",
+
+        round(
+            accuracy * 100,
+            2
+        ),
+
+        "%"
+
+    )
+
+
+    # -----------------------------------------------------
+    # Save Model
+    # -----------------------------------------------------
+
+    saved_model = {
+
+        "version": MODEL_VERSION,
+
+        "features": list(
+            X.columns
+        ),
+
+        "model": model
+
+    }
+
+
+    joblib.dump(
+
+        saved_model,
+
+        MODEL_PATH
+
+    )
+
+
+    print(
+        "\nNew Random Forest model saved"
     )
 
     print(
-        "\nModel Accuracy ",
-        round(accuracy * 100, 2),
-        "%"
-    )
-
-
-    # -----------------------------------------------------
-    # Save Model to Google Drive
-    # -----------------------------------------------------
-
-    joblib.dump(
-        model,
         MODEL_PATH
     )
 
-    print("\nRandom Forest model saved to Google Drive")
-    print(MODEL_PATH)
+
+# =========================================================
+# 7. Enter URL
+# =========================================================
+
+url = input(
+    "\nEnter URL "
+)
 
 
 # =========================================================
-# 5. Test a New URL
+# 8. Extract Features
 # =========================================================
 
-url = input("\nEnter URL ")
+features = pd.DataFrame([
 
+    extract_features(url)
 
-features = pd.DataFrame([{
-
-    "url_length": len(url),
-
-    "has_at": int(
-        "@" in url
-    ),
-
-    "has_https": int(
-        url.lower().startswith("https://")
-    ),
-
-    "dot_count": url.count("."),
-
-    "slash_count": url.count("/")
-
-}])
+])
 
 
 # =========================================================
-# 6. Predict
+# 9. Prediction
 # =========================================================
 
-result = model.predict(features)[0]
+result = model.predict(
 
+    features
+
+)[0]
+
+
+probability = model.predict_proba(
+
+    features
+
+)[0]
+
+
+legitimate_probability = (
+    probability[0] * 100
+)
+
+phishing_probability = (
+    probability[1] * 100
+)
+
+
+# =========================================================
+# 10. Display Result
+# =========================================================
+
+print("\nPrediction")
 
 if result == 1:
 
-    print("\nPrediction  Phishing Website")
+    print(
+        "Phishing Website"
+    )
 
 else:
 
-    print("\nPrediction  Legitimate Website")
+    print(
+        "Legitimate Website"
+    )
+
+
+print(
+
+    "\nLegitimate Probability ",
+
+    round(
+        legitimate_probability,
+        2
+    ),
+    "%"
+)
+
+
+print(
+
+    "Phishing Probability ",
+
+    round(
+        phishing_probability,
+        2
+    ),
+    "%"
+)
